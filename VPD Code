@@ -1,0 +1,972 @@
+"""
+PyMutScan — Virtual Patient Diagnosis Module
+============================================
+Symptom-based cancer diagnosis, gene panel analysis,
+staging (I–IV), and risk management recommendations.
+Run: py -3.12 -m streamlit run virtual_patient_diagnosis.py
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime
+import random
+
+# ──────────────────────────────────────────────
+# PAGE CONFIG
+# ──────────────────────────────────────────────
+st.set_page_config(
+    page_title="PyMutScan | Virtual Patient Diagnosis",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ──────────────────────────────────────────────
+# CUSTOM CSS  — Dark clinical theme
+# ──────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Sora:wght@300;400;600;800&display=swap');
+
+:root {
+    --bg:       #0a0f1e;
+    --surface:  #111827;
+    --border:   #1e2d45;
+    --accent:   #00d4ff;
+    --accent2:  #7c3aed;
+    --danger:   #ef4444;
+    --warning:  #f59e0b;
+    --success:  #10b981;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+}
+
+html, body, [class*="css"] { font-family: 'Sora', sans-serif; color: var(--text); }
+.stApp { background: var(--bg); }
+
+/* Header */
+.vpd-header {
+    background: linear-gradient(135deg, #0a0f1e 0%, #0d1b3e 50%, #0a0f1e 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem 2.5rem;
+    margin-bottom: 1.5rem;
+    position: relative;
+    overflow: hidden;
+}
+.vpd-header::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 20% 50%, rgba(0,212,255,0.08) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 50%, rgba(124,58,237,0.08) 0%, transparent 60%);
+}
+.vpd-title { font-size: 2rem; font-weight: 800; color: var(--accent); margin:0; letter-spacing:-0.5px; }
+.vpd-sub   { font-size: 0.9rem; color: var(--muted); margin:0.3rem 0 0; }
+
+/* Cards */
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.4rem 1.6rem;
+    margin-bottom: 1rem;
+}
+.card-title { font-size: 0.75rem; font-weight: 600; letter-spacing: 1.5px;
+              text-transform: uppercase; color: var(--muted); margin-bottom: 0.8rem; }
+
+/* Risk badges */
+.badge { display:inline-block; padding:0.25rem 0.8rem; border-radius:999px;
+         font-size:0.75rem; font-weight:700; letter-spacing:0.5px; }
+.badge-low      { background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.3); }
+.badge-moderate { background:rgba(245,158,11,0.15);  color:#f59e0b; border:1px solid rgba(245,158,11,0.3); }
+.badge-high     { background:rgba(239,68,68,0.15);   color:#ef4444; border:1px solid rgba(239,68,68,0.3); }
+.badge-critical { background:rgba(239,68,68,0.25);   color:#ff6b6b; border:1px solid #ef4444; animation: pulse 1.5s infinite; }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+
+/* Stage indicator */
+.stage-box {
+    display: flex; align-items: center; justify-content: center;
+    width: 80px; height: 80px; border-radius: 50%;
+    font-size: 2rem; font-weight: 800;
+    margin: 0 auto 0.5rem;
+}
+.stage-1 { background:rgba(16,185,129,0.2);  border:3px solid #10b981; color:#10b981; }
+.stage-2 { background:rgba(245,158,11,0.2);  border:3px solid #f59e0b; color:#f59e0b; }
+.stage-3 { background:rgba(239,68,68,0.2);   border:3px solid #ef4444; color:#ef4444; }
+.stage-4 { background:rgba(239,68,68,0.35);  border:3px solid #ff2222; color:#ff4444; }
+
+/* Gene tag */
+.gene-tag {
+    display:inline-block; padding:0.2rem 0.7rem; border-radius:6px;
+    font-family:'JetBrains Mono',monospace; font-size:0.78rem; font-weight:700;
+    background:rgba(0,212,255,0.1); color:var(--accent);
+    border:1px solid rgba(0,212,255,0.3); margin:0.2rem;
+}
+.gene-tag.mutant {
+    background:rgba(239,68,68,0.15); color:#ff6b6b;
+    border:1px solid rgba(239,68,68,0.4);
+}
+
+/* Recommendations */
+.rec-item {
+    display:flex; gap:0.8rem; align-items:flex-start;
+    padding:0.7rem 0; border-bottom:1px solid var(--border);
+}
+.rec-item:last-child { border-bottom:none; }
+.rec-icon { font-size:1.2rem; flex-shrink:0; margin-top:0.1rem; }
+.rec-text { font-size:0.88rem; line-height:1.5; }
+.rec-label { font-size:0.7rem; font-weight:700; letter-spacing:1px;
+             text-transform:uppercase; color:var(--muted); margin-bottom:0.2rem; }
+
+/* Sidebar */
+section[data-testid="stSidebar"] { background:#080d1a !important; border-right:1px solid var(--border); }
+section[data-testid="stSidebar"] .stSelectbox label,
+section[data-testid="stSidebar"] .stMultiSelect label,
+section[data-testid="stSidebar"] p { color: var(--text) !important; }
+
+/* Streamlit overrides */
+.stButton > button {
+    background: linear-gradient(135deg, #00d4ff, #7c3aed);
+    color: white; border: none; border-radius: 10px;
+    font-weight: 700; font-size: 1rem; padding: 0.7rem 2rem;
+    width: 100%; transition: opacity 0.2s;
+}
+.stButton > button:hover { opacity: 0.85; }
+.stMultiSelect [data-baseweb="tag"] { background: rgba(0,212,255,0.2) !important; }
+
+div[data-testid="metric-container"] {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.8rem 1rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════
+# KNOWLEDGE BASE
+# ══════════════════════════════════════════════════════
+
+# Symptom → cancer type scoring weights
+SYMPTOM_SCORES = {
+    "Unexplained weight loss (>10%)": {
+        "Lung": 3, "Colorectal": 3, "Lymphoma": 4, "Pancreatic": 4, "Gastric": 3
+    },
+    "Persistent fatigue / weakness": {
+        "Leukemia": 4, "Lymphoma": 3, "Lung": 2, "Colorectal": 2, "Ovarian": 2
+    },
+    "Chronic cough / blood in sputum": {
+        "Lung": 5, "Thyroid": 1, "Lymphoma": 2
+    },
+    "Unexplained lump or swelling": {
+        "Lymphoma": 4, "Breast": 4, "Thyroid": 3, "Prostate": 2, "Sarcoma": 3
+    },
+    "Changes in bowel / bladder habits": {
+        "Colorectal": 5, "Bladder": 4, "Prostate": 3, "Ovarian": 2
+    },
+    "Abnormal bleeding / bruising": {
+        "Leukemia": 5, "Bladder": 3, "Colorectal": 3, "Uterine": 3
+    },
+    "Persistent pain (bone/back/pelvis)": {
+        "Prostate": 4, "Bone": 5, "Multiple Myeloma": 4, "Pancreatic": 3, "Ovarian": 3
+    },
+    "Skin changes (new moles / lesions)": {
+        "Melanoma": 6, "Skin (BCC/SCC)": 5
+    },
+    "Difficulty swallowing / hoarseness": {
+        "Esophageal": 5, "Thyroid": 4, "Lung": 2, "Gastric": 2
+    },
+    "Night sweats / recurrent fever": {
+        "Lymphoma": 5, "Leukemia": 4, "Lung": 2
+    },
+    "Abdominal bloating / fullness": {
+        "Ovarian": 5, "Gastric": 4, "Pancreatic": 4, "Colorectal": 3
+    },
+    "Jaundice (yellowing of skin/eyes)": {
+        "Pancreatic": 5, "Hepatocellular": 5, "Bile Duct": 5, "Gastric": 2
+    },
+    "Headaches / vision / neurological changes": {
+        "Brain": 6, "Lung": 2  # Lung can metastasize
+    },
+    "Nipple discharge / breast changes": {
+        "Breast": 6
+    },
+    "Urinary difficulties / PSA elevation": {
+        "Prostate": 6, "Bladder": 4
+    },
+}
+
+# Gene → cancer associations with pathway info
+GENE_DATABASE = {
+    "TP53": {
+        "full_name": "Tumor Protein p53",
+        "role": "Tumor Suppressor",
+        "pathway": "DNA Damage Response / Apoptosis",
+        "cancers": ["Lung", "Breast", "Colorectal", "Brain", "Leukemia", "Lymphoma", "Ovarian", "Gastric", "Sarcoma"],
+        "risk_multiplier": 2.5,
+        "description": "Guardian of the genome. Mutations lead to loss of apoptosis and uncontrolled proliferation.",
+        "stage_push": 1,  # Pushes staging up by 1
+        "treatment_targets": ["MDM2 inhibitors", "APR-246 (p53 reactivation)", "Checkpoint immunotherapy"]
+    },
+    "EGFR": {
+        "full_name": "Epidermal Growth Factor Receptor",
+        "role": "Oncogene (RTK)",
+        "pathway": "RAS/MAPK / PI3K-AKT",
+        "cancers": ["Lung", "Breast", "Colorectal", "Brain (Glioblastoma)", "Head & Neck"],
+        "risk_multiplier": 1.8,
+        "description": "Activating mutations (exon 19 del, L858R) drive NSCLC. Targetable with TKIs.",
+        "stage_push": 0,
+        "treatment_targets": ["Erlotinib", "Gefitinib", "Osimertinib (3rd-gen TKI)", "Afatinib"]
+    },
+    "KRAS": {
+        "full_name": "Kirsten Rat Sarcoma Viral Proto-oncogene",
+        "role": "Oncogene (GTPase)",
+        "pathway": "RAS/MAPK",
+        "cancers": ["Colorectal", "Lung", "Pancreatic", "Ovarian", "Gastric"],
+        "risk_multiplier": 2.0,
+        "description": "Most commonly mutated oncogene. G12C mutation now targetable with sotorasib.",
+        "stage_push": 0,
+        "treatment_targets": ["Sotorasib (KRAS G12C)", "Adagrasib", "MEK inhibitors"]
+    },
+    "BRCA1": {
+        "full_name": "Breast Cancer Gene 1",
+        "role": "Tumor Suppressor (DNA Repair)",
+        "pathway": "Homologous Recombination",
+        "cancers": ["Breast", "Ovarian", "Pancreatic", "Prostate"],
+        "risk_multiplier": 3.0,
+        "description": "Germline mutation confers 70% lifetime breast cancer risk and 40% ovarian cancer risk.",
+        "stage_push": 1,
+        "treatment_targets": ["PARP inhibitors (Olaparib, Niraparib)", "Platinum chemotherapy", "Immunotherapy"]
+    },
+    "BRCA2": {
+        "full_name": "Breast Cancer Gene 2",
+        "role": "Tumor Suppressor (DNA Repair)",
+        "pathway": "Homologous Recombination",
+        "cancers": ["Breast", "Ovarian", "Prostate", "Pancreatic", "Melanoma"],
+        "risk_multiplier": 2.5,
+        "description": "Similar to BRCA1, essential for HR repair. Associated with male breast cancer risk.",
+        "stage_push": 1,
+        "treatment_targets": ["PARP inhibitors", "Platinum-based chemotherapy", "Rucaparib"]
+    },
+    "HER2 (ERBB2)": {
+        "full_name": "Human Epidermal Growth Factor Receptor 2",
+        "role": "Oncogene (RTK)",
+        "pathway": "PI3K-AKT / RAS-MAPK",
+        "cancers": ["Breast", "Gastric", "Lung", "Colorectal", "Bladder"],
+        "risk_multiplier": 1.7,
+        "description": "Amplification drives aggressive breast tumors. Highly targetable with monoclonal antibodies.",
+        "stage_push": 0,
+        "treatment_targets": ["Trastuzumab (Herceptin)", "Pertuzumab", "T-DM1 (Kadcyla)", "Lapatinib"]
+    },
+    "BRAF": {
+        "full_name": "B-Raf Proto-oncogene",
+        "role": "Oncogene (Serine/Threonine Kinase)",
+        "pathway": "RAS/MAPK",
+        "cancers": ["Melanoma", "Colorectal", "Thyroid", "Lung", "Brain"],
+        "risk_multiplier": 1.9,
+        "description": "V600E mutation present in ~50% of melanomas. BRAF + MEK inhibitor combo is highly effective.",
+        "stage_push": 0,
+        "treatment_targets": ["Vemurafenib (BRAF V600E)", "Dabrafenib + Trametinib", "Encorafenib"]
+    },
+    "PIK3CA": {
+        "full_name": "Phosphatidylinositol-4,5-bisphosphate 3-kinase Catalytic Subunit Alpha",
+        "role": "Oncogene (Lipid Kinase)",
+        "pathway": "PI3K-AKT-mTOR",
+        "cancers": ["Breast", "Colorectal", "Lung", "Ovarian", "Gastric"],
+        "risk_multiplier": 1.6,
+        "description": "Activating mutations cause constitutive PI3K signaling. Associated with hormone receptor-positive breast cancer.",
+        "stage_push": 0,
+        "treatment_targets": ["Alpelisib (PI3Kα inhibitor)", "Everolimus (mTOR)", "Idelalisib"]
+    },
+    "PTEN": {
+        "full_name": "Phosphatase and Tensin Homolog",
+        "role": "Tumor Suppressor (Lipid Phosphatase)",
+        "pathway": "PI3K-AKT-mTOR (negative regulator)",
+        "cancers": ["Prostate", "Breast", "Endometrial", "Brain (Glioblastoma)", "Ovarian"],
+        "risk_multiplier": 2.2,
+        "description": "Loss of PTEN leads to hyperactivation of PI3K/AKT pathway. Cowden syndrome gene.",
+        "stage_push": 1,
+        "treatment_targets": ["mTOR inhibitors", "PI3K inhibitors", "AKT inhibitors (Ipatasertib)"]
+    },
+    "RB1": {
+        "full_name": "Retinoblastoma Protein 1",
+        "role": "Tumor Suppressor (Cell Cycle)",
+        "pathway": "Cell Cycle Control (G1/S checkpoint)",
+        "cancers": ["Retinoblastoma", "Lung (SCLC)", "Bladder", "Breast", "Bone"],
+        "risk_multiplier": 2.8,
+        "description": "First tumor suppressor discovered. Loss allows unchecked cell cycle progression through G1/S.",
+        "stage_push": 1,
+        "treatment_targets": ["CDK4/6 inhibitors", "Palbociclib", "Ribociclib", "Abemaciclib"]
+    },
+    "MYC": {
+        "full_name": "MYC Proto-oncogene",
+        "role": "Oncogene (Transcription Factor)",
+        "pathway": "Cell Proliferation / Metabolism",
+        "cancers": ["Lymphoma (Burkitt)", "Leukemia", "Breast", "Lung", "Colorectal"],
+        "risk_multiplier": 2.3,
+        "description": "Master transcription factor regulating cell growth. Amplification drives aggressive tumors.",
+        "stage_push": 1,
+        "treatment_targets": ["BET inhibitors (JQ1)", "Aurora A inhibitors", "CDK inhibitors"]
+    },
+    "ALK": {
+        "full_name": "Anaplastic Lymphoma Kinase",
+        "role": "Oncogene (RTK Fusion)",
+        "pathway": "RAS-MAPK / JAK-STAT / PI3K",
+        "cancers": ["Lung (NSCLC)", "Lymphoma (ALCL)", "Neuroblastoma"],
+        "risk_multiplier": 1.6,
+        "description": "EML4-ALK fusion found in ~5% of NSCLC. Excellent response to ALK inhibitors.",
+        "stage_push": 0,
+        "treatment_targets": ["Crizotinib", "Alectinib", "Lorlatinib (3rd-gen)", "Brigatinib"]
+    },
+    "VHL": {
+        "full_name": "Von Hippel-Lindau Tumor Suppressor",
+        "role": "Tumor Suppressor (E3 Ubiquitin Ligase)",
+        "pathway": "HIF / Angiogenesis",
+        "cancers": ["Renal Cell Carcinoma", "Hemangioblastoma", "Pheochromocytoma"],
+        "risk_multiplier": 3.0,
+        "description": "Regulates HIF-1α degradation. Loss causes overexpression of VEGF and angiogenic factors.",
+        "stage_push": 0,
+        "treatment_targets": ["Sunitinib", "Pazopanib", "Bevacizumab (anti-VEGF)", "Belzutifan (HIF-2α)"]
+    },
+    "APC": {
+        "full_name": "Adenomatous Polyposis Coli",
+        "role": "Tumor Suppressor",
+        "pathway": "WNT / β-Catenin",
+        "cancers": ["Colorectal", "Gastric", "Pancreatic", "Hepatocellular"],
+        "risk_multiplier": 2.0,
+        "description": "Germline mutations cause Familial Adenomatous Polyposis (FAP) with near 100% colorectal cancer risk.",
+        "stage_push": 1,
+        "treatment_targets": ["COX-2 inhibitors (Sulindac)", "Celecoxib", "WNT pathway inhibitors"]
+    },
+    "MLH1 / MSH2 (Lynch)": {
+        "full_name": "MutL/MutS Homolog (Mismatch Repair)",
+        "role": "Tumor Suppressor (DNA MMR)",
+        "pathway": "Mismatch Repair (dMMR/MSI-H)",
+        "cancers": ["Colorectal", "Uterine", "Ovarian", "Gastric", "Bladder"],
+        "risk_multiplier": 2.5,
+        "description": "Lynch syndrome genes. dMMR tumors are MSI-H and respond exceptionally to immune checkpoint therapy.",
+        "stage_push": 0,
+        "treatment_targets": ["Pembrolizumab", "Nivolumab (MSI-H approval)", "Dostarlimab"]
+    },
+    "BCL2": {
+        "full_name": "B-Cell Lymphoma 2",
+        "role": "Oncogene (Anti-apoptotic)",
+        "pathway": "Intrinsic Apoptosis",
+        "cancers": ["Lymphoma (Follicular/Diffuse)", "Leukemia (CLL)", "Multiple Myeloma"],
+        "risk_multiplier": 1.8,
+        "description": "Overexpression blocks mitochondrial apoptosis. t(14;18) translocation is a hallmark of follicular lymphoma.",
+        "stage_push": 0,
+        "treatment_targets": ["Venetoclax (BCL-2 inhibitor)", "Navitoclax", "R-CHOP chemotherapy"]
+    },
+    "CDKN2A (p16)": {
+        "full_name": "Cyclin Dependent Kinase Inhibitor 2A",
+        "role": "Tumor Suppressor (CDK Inhibitor)",
+        "pathway": "Cell Cycle G1/S",
+        "cancers": ["Melanoma", "Pancreatic", "Lung", "Bladder", "Esophageal"],
+        "risk_multiplier": 2.0,
+        "description": "Encodes p16 and p14ARF. Germline mutations confer high familial melanoma risk.",
+        "stage_push": 1,
+        "treatment_targets": ["CDK4/6 inhibitors", "Immunotherapy", "Targeted MEK inhibition"]
+    },
+    "FGFR2 / FGFR3": {
+        "full_name": "Fibroblast Growth Factor Receptor 2/3",
+        "role": "Oncogene (RTK)",
+        "pathway": "RAS-MAPK / PI3K-AKT / STAT",
+        "cancers": ["Bladder", "Uterine", "Lung", "Gastric", "Breast"],
+        "risk_multiplier": 1.5,
+        "description": "Fusions and amplifications drive oncogenesis. FGFR3 mutations are hallmark of low-grade bladder cancer.",
+        "stage_push": 0,
+        "treatment_targets": ["Erdafitinib (FGFR)", "Pemigatinib", "Infigratinib"]
+    },
+}
+
+# Cancer staging criteria
+STAGING_CRITERIA = {
+    "Stage I": {
+        "score_range": (0, 10),
+        "description": "Localized — tumor confined to primary site, no lymph node involvement.",
+        "5yr_survival": "70–90%",
+        "urgency": "Routine",
+        "color": "#10b981",
+    },
+    "Stage II": {
+        "score_range": (11, 20),
+        "description": "Regional spread — tumor larger or with limited local lymph node involvement.",
+        "5yr_survival": "50–70%",
+        "urgency": "Moderate",
+        "color": "#f59e0b",
+    },
+    "Stage III": {
+        "score_range": (21, 30),
+        "description": "Advanced regional — significant lymph node involvement, possible adjacent tissue invasion.",
+        "5yr_survival": "25–50%",
+        "urgency": "High",
+        "color": "#ef4444",
+    },
+    "Stage IV": {
+        "score_range": (31, 999),
+        "description": "Metastatic — distant organ spread confirmed or highly probable.",
+        "5yr_survival": "10–25%",
+        "urgency": "Critical",
+        "color": "#ff2222",
+    },
+}
+
+RISK_MANAGEMENT = {
+    "Low": [
+        ("🔬", "Surveillance", "Annual imaging (CT/MRI/Ultrasound) and biomarker panel monitoring"),
+        ("💊", "Chemoprevention", "Consider aspirin or hormonal chemopreventives depending on cancer type"),
+        ("🥗", "Lifestyle Optimization", "Mediterranean diet, BMI <25, avoid tobacco, limit alcohol to <1 drink/day"),
+        ("🧪", "Liquid Biopsy", "ctDNA monitoring every 6 months to detect minimal residual disease"),
+        ("👨‍👩‍👧", "Genetic Counseling", "Cascade testing for first-degree relatives if germline mutation confirmed"),
+    ],
+    "Moderate": [
+        ("🏥", "Specialist Referral", "Oncology review within 4–6 weeks; multidisciplinary tumor board consultation"),
+        ("🔬", "Biopsy + Histopathology", "Core needle biopsy for tissue diagnosis and molecular profiling (NGS panel)"),
+        ("💉", "Targeted Therapy Assessment", "Biomarker testing (IHC, FISH) for therapy eligibility determination"),
+        ("📷", "Advanced Imaging", "PET-CT scan for staging and metabolic activity assessment"),
+        ("🧬", "Germline Testing", "Full germline panel (BRCA1/2, Lynch genes, TP53, CDKN2A)"),
+        ("🥗", "Nutritional Support", "Dietitian consultation; caloric and protein optimization pre-treatment"),
+    ],
+    "High": [
+        ("🚨", "Urgent Oncology Referral", "Oncologist appointment within 2 weeks; MDT tumor board escalation"),
+        ("💊", "Systemic Therapy", "Initiate targeted therapy or chemotherapy based on mutation profile ASAP"),
+        ("🔬", "Comprehensive NGS", "Whole-exome or tumor-normal sequencing for full mutational landscape"),
+        ("📷", "Full-Body PET-CT", "Immediate staging PET-CT to rule out distant metastasis"),
+        ("🩸", "Liquid Biopsy Panel", "cfDNA/ctDNA baseline for treatment monitoring and resistance tracking"),
+        ("🧠", "Psychological Support", "Oncology psychologist and palliative care team consultation"),
+        ("👨‍👩‍👧", "Family Risk Assessment", "Urgent cascade genetic testing for immediate family members"),
+    ],
+    "Critical": [
+        ("🚑", "Emergency Multidisciplinary Board", "Same-day MDT review; initiate treatment protocol immediately"),
+        ("💉", "Immunotherapy / Precision Therapy", "PD-L1, MSI-H, TMB assessment for checkpoint inhibitor eligibility"),
+        ("🧬", "Clinical Trial Enrollment", "Screen for Phase I/II trials; contact NCI-designated cancer centers"),
+        ("💊", "Palliative + Curative Dual Approach", "Integrate palliative care from day 1; assess surgical resectability"),
+        ("🩸", "Intensive Biomarker Monitoring", "Weekly ctDNA + monthly imaging for rapid treatment adaptation"),
+        ("🧠", "Holistic Care Team", "Pain management, nutritional, psychological, and spiritual care coordination"),
+        ("📝", "Advance Care Planning", "Discuss prognosis, goals of care, and advance directives with patient/family"),
+    ],
+}
+
+SCREENING_RECOMMENDATIONS = {
+    "Breast": ["Annual mammography + MRI (high-risk)", "BRCA testing if family history", "Clinical breast exam q6mo"],
+    "Colorectal": ["Colonoscopy every 3–5 years", "Annual fecal immunochemical test (FIT)", "CT colonography"],
+    "Lung": ["Annual low-dose CT (LDCT) — smokers 50–80y", "Sputum cytology", "Bronchoscopy if mass detected"],
+    "Prostate": ["PSA + DRE annually (>50y)", "MRI-guided biopsy if PSA >4 ng/mL", "Gleason score pathology"],
+    "Ovarian": ["Transvaginal ultrasound + CA-125", "BRCA germline testing", "Risk-reducing salpingo-oophorectomy"],
+    "Melanoma": ["Full-skin dermoscopy annually", "Sentinel lymph node biopsy", "Whole-body PET if advanced"],
+    "Lymphoma": ["CT of chest/abdomen/pelvis", "Bone marrow biopsy", "LDH + beta-2 microglobulin levels"],
+    "Leukemia": ["CBC with differential", "Bone marrow aspiration + biopsy", "Cytogenetics / FISH / Flow cytometry"],
+    "Pancreatic": ["EUS + CA 19-9 (high-risk)", "MRI/MRCP", "Genetic counseling (BRCA2, PALB2)"],
+    "Hepatocellular": ["Ultrasound + AFP every 6mo (cirrhosis)", "MRI liver protocol", "Hepatitis B/C serology"],
+}
+
+
+# ══════════════════════════════════════════════════════
+# DIAGNOSIS ENGINE
+# ══════════════════════════════════════════════════════
+
+def compute_cancer_scores(symptoms, genes, duration_months, family_history):
+    scores = {}
+
+    # Symptom scoring
+    for symptom in symptoms:
+        if symptom in SYMPTOM_SCORES:
+            for cancer, weight in SYMPTOM_SCORES[symptom].items():
+                scores[cancer] = scores.get(cancer, 0) + weight
+
+    # Gene scoring
+    for gene in genes:
+        if gene in GENE_DATABASE:
+            for cancer in GENE_DATABASE[gene]["cancers"]:
+                cancer_short = cancer.split(" ")[0]  # e.g., "Lung (NSCLC)" → "Lung"
+                for c in list(scores.keys()):
+                    if cancer_short in c or c in cancer:
+                        scores[c] = scores[c] * GENE_DATABASE[gene]["risk_multiplier"]
+                # Also add the cancer if not already scored
+                for c in GENE_DATABASE[gene]["cancers"]:
+                    c_clean = c.split(" (")[0]
+                    if c_clean not in scores:
+                        scores[c_clean] = 3 * GENE_DATABASE[gene]["risk_multiplier"]
+
+    # Duration modifier
+    if duration_months > 12:
+        scores = {k: v * 1.4 for k, v in scores.items()}
+    elif duration_months > 6:
+        scores = {k: v * 1.2 for k, v in scores.items()}
+
+    # Family history
+    if family_history:
+        scores = {k: v * 1.3 for k, v in scores.items()}
+
+    return dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+
+
+def determine_stage(total_score, mutated_genes):
+    stage_push = sum(GENE_DATABASE[g]["stage_push"] for g in mutated_genes if g in GENE_DATABASE)
+    adjusted = total_score + stage_push * 3
+    if adjusted <= 10:
+        return "Stage I", 1
+    elif adjusted <= 20:
+        return "Stage II", 2
+    elif adjusted <= 30:
+        return "Stage III", 3
+    else:
+        return "Stage IV", 4
+
+
+def determine_risk(stage_num, gene_count, symptom_count):
+    base = stage_num
+    if gene_count >= 3:
+        base += 1
+    if symptom_count >= 7:
+        base += 1
+    if base <= 1:
+        return "Low"
+    elif base == 2:
+        return "Moderate"
+    elif base == 3:
+        return "High"
+    else:
+        return "Critical"
+
+
+# ══════════════════════════════════════════════════════
+# UI LAYOUT
+# ══════════════════════════════════════════════════════
+
+# Header
+st.markdown("""
+<div class="vpd-header">
+    <div class="vpd-title">🧬 PyMutScan — Virtual Patient Diagnosis</div>
+    <div class="vpd-sub">Gene Panel Analysis · Cancer Staging · Risk Management · Clinical Recommendations</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Sidebar inputs ──
+with st.sidebar:
+    st.markdown("### 🏥 Patient Profile")
+    patient_name = st.text_input("Patient ID / Name", value="VPD-2024-001")
+    patient_age  = st.number_input("Age", 18, 100, 55)
+    patient_sex  = st.selectbox("Biological Sex", ["Male", "Female", "Other"])
+    st.markdown("---")
+
+    st.markdown("### ⏱️ Clinical History")
+    duration_months = st.slider("Symptom Duration (months)", 1, 60, 6)
+    family_history  = st.checkbox("Family history of cancer")
+    smoker          = st.checkbox("Current / former smoker")
+    st.markdown("---")
+
+    st.markdown("### 🔬 Analysis Options")
+    show_pathway = st.checkbox("Show signaling pathways", value=True)
+    show_targets = st.checkbox("Show therapeutic targets", value=True)
+    show_screening= st.checkbox("Show screening protocols", value=True)
+
+# ── Main tabs ──
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["📋 Symptom Input", "🧬 Gene Panel", "🔍 Diagnosis & Staging", "📊 Clinical Report"]
+)
+
+
+# ─────────────────────────────────────
+# TAB 1 — Symptoms
+# ─────────────────────────────────────
+with tab1:
+    st.markdown("#### Select Presenting Symptoms")
+    st.caption("Choose all symptoms the patient is currently experiencing:")
+
+    col1, col2 = st.columns(2)
+    all_symptoms = list(SYMPTOM_SCORES.keys())
+    half = len(all_symptoms) // 2
+
+    selected_symptoms = []
+    with col1:
+        for s in all_symptoms[:half]:
+            if st.checkbox(s, key=f"sym_{s}"):
+                selected_symptoms.append(s)
+    with col2:
+        for s in all_symptoms[half:]:
+            if st.checkbox(s, key=f"sym2_{s}"):
+                selected_symptoms.append(s)
+
+    # Modifier symptoms
+    st.markdown("---")
+    st.markdown("#### ⚠️ Red Flag Modifiers")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        rapid_progression = st.checkbox("Rapid symptom progression")
+    with col_b:
+        multiple_sites    = st.checkbox("Multiple organ involvement")
+    with col_c:
+        prior_malignancy  = st.checkbox("Prior malignancy history")
+
+    if selected_symptoms:
+        st.success(f"✅ {len(selected_symptoms)} symptom(s) recorded")
+    else:
+        st.info("ℹ️ Please select at least one symptom to proceed.")
+
+
+# ─────────────────────────────────────
+# TAB 2 — Gene Panel
+# ─────────────────────────────────────
+with tab2:
+    st.markdown("#### 🧬 Select Mutated Genes (NGS / Sequencing Results)")
+    st.caption("Select all genes with detected pathogenic or likely-pathogenic variants:")
+
+    gene_cols = st.columns(3)
+    all_genes = list(GENE_DATABASE.keys())
+    selected_genes = []
+
+    for i, gene in enumerate(all_genes):
+        with gene_cols[i % 3]:
+            info = GENE_DATABASE[gene]
+            if st.checkbox(
+                f"**{gene}**\n_{info['role']}_",
+                key=f"gene_{gene}",
+                help=info["description"]
+            ):
+                selected_genes.append(gene)
+
+    if selected_genes:
+        st.markdown("---")
+        st.markdown("#### Selected Gene Summary")
+        for g in selected_genes:
+            d = GENE_DATABASE[g]
+            with st.expander(f"🔬 {g} — {d['full_name']}"):
+                col_i, col_j = st.columns([2, 1])
+                with col_i:
+                    st.markdown(f"**Role:** {d['role']}")
+                    st.markdown(f"**Pathway:** `{d['pathway']}`")
+                    st.markdown(f"**Description:** {d['description']}")
+                    if show_targets:
+                        st.markdown("**Therapeutic Targets:**")
+                        for t in d["treatment_targets"]:
+                            st.markdown(f"  - {t}")
+                with col_j:
+                    st.markdown(f"**Risk Multiplier:** `{d['risk_multiplier']}×`")
+                    st.markdown(f"**Associated Cancers:**")
+                    for c in d["cancers"]:
+                        st.markdown(f"  - {c}")
+
+
+# ─────────────────────────────────────
+# TAB 3 — Diagnosis & Staging
+# ─────────────────────────────────────
+with tab3:
+    if not selected_symptoms and not selected_genes:
+        st.warning("⚠️ Please complete at least the Symptom Input or Gene Panel tabs first.")
+    else:
+        # Run engine
+        modifier_bonus = sum([
+            rapid_progression * 5,
+            multiple_sites * 7,
+            prior_malignancy * 6,
+            smoker * 4
+        ])
+
+        cancer_scores = compute_cancer_scores(
+            selected_symptoms, selected_genes, duration_months, family_history
+        )
+
+        if not cancer_scores:
+            st.info("No significant cancer risk patterns detected with current inputs.")
+        else:
+            top_cancers = list(cancer_scores.items())[:5]
+            top_cancer_name = top_cancers[0][0]
+            top_score = top_cancers[0][1] + modifier_bonus
+
+            stage_label, stage_num = determine_stage(top_score, selected_genes)
+            risk_level = determine_risk(stage_num, len(selected_genes), len(selected_symptoms))
+
+            # ── Key metrics row ──
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.metric("Primary Diagnosis", top_cancer_name)
+            with m2:
+                st.metric("Clinical Stage", stage_label)
+            with m3:
+                st.metric("Risk Level", risk_level)
+            with m4:
+                surv = STAGING_CRITERIA[stage_label]["5yr_survival"]
+                st.metric("5-Year Survival", surv)
+
+            st.markdown("---")
+
+            col_left, col_right = st.columns([1, 2])
+
+            # ── Stage visual ──
+            with col_left:
+                stage_css = f"stage-{stage_num}"
+                stage_info = STAGING_CRITERIA[stage_label]
+                st.markdown(f"""
+                <div class="card" style="text-align:center">
+                    <div class="card-title">Cancer Staging</div>
+                    <div class="stage-box {stage_css}">IV</div>
+                    <div style="font-size:1.4rem;font-weight:800;color:{stage_info['color']};margin-bottom:0.3rem">{stage_label}</div>
+                    <div style="font-size:0.82rem;color:#94a3b8;line-height:1.5">{stage_info['description']}</div>
+                    <br>
+                    <div style="font-size:0.75rem;letter-spacing:1px;text-transform:uppercase;color:#64748b">5-Year Survival Rate</div>
+                    <div style="font-size:1.2rem;font-weight:700;color:{stage_info['color']}">{stage_info['5yr_survival']}</div>
+                    <br>
+                    <div style="font-size:0.75rem;letter-spacing:1px;text-transform:uppercase;color:#64748b">Clinical Urgency</div>
+                    <div style="font-size:1rem;font-weight:600;color:{stage_info['color']}">{stage_info['urgency']}</div>
+                </div>
+                """.replace("IV", f"{'I'*stage_num if stage_num<4 else 'IV'}"), unsafe_allow_html=True)
+
+                # Stage progression chart
+                fig_stage = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=stage_num,
+                    number={"suffix": f" ({stage_label})", "font": {"color": stage_info["color"]}},
+                    gauge={
+                        "axis": {"range": [0, 4], "tickvals": [1,2,3,4],
+                                 "ticktext": ["I","II","III","IV"],
+                                 "tickcolor": "#94a3b8"},
+                        "bar": {"color": stage_info["color"]},
+                        "bgcolor": "#111827",
+                        "steps": [
+                            {"range":[0,1], "color":"rgba(16,185,129,0.2)"},
+                            {"range":[1,2], "color":"rgba(245,158,11,0.2)"},
+                            {"range":[2,3], "color":"rgba(239,68,68,0.2)"},
+                            {"range":[3,4], "color":"rgba(239,68,68,0.35)"},
+                        ],
+                        "threshold": {"line":{"color":"white","width":2},"value":stage_num}
+                    },
+                    title={"text":"Stage Severity", "font":{"color":"#94a3b8","size":12}}
+                ))
+                fig_stage.update_layout(
+                    paper_bgcolor="#111827", font_color="#e2e8f0",
+                    height=220, margin=dict(l=20,r=20,t=30,b=0)
+                )
+                st.plotly_chart(fig_stage, use_container_width=True)
+
+            # ── Cancer probability bar chart ──
+            with col_right:
+                names  = [c[0] for c in top_cancers]
+                values = [c[1] for c in top_cancers]
+                max_v  = max(values)
+                pcts   = [round(v/max_v*100, 1) for v in values]
+                colors = ["#00d4ff","#7c3aed","#f59e0b","#10b981","#64748b"]
+
+                fig_bar = go.Figure(go.Bar(
+                    x=pcts, y=names, orientation="h",
+                    marker_color=colors,
+                    text=[f"{p}%" for p in pcts],
+                    textposition="inside",
+                    insidetextanchor="start",
+                ))
+                fig_bar.update_layout(
+                    title="Differential Diagnosis — Cancer Probability Ranking",
+                    paper_bgcolor="#111827", plot_bgcolor="#111827",
+                    font_color="#e2e8f0", height=280,
+                    margin=dict(l=10,r=20,t=40,b=20),
+                    xaxis=dict(title="Relative Risk Score (%)", gridcolor="#1e2d45"),
+                    yaxis=dict(autorange="reversed"),
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+                # Cancer formation info
+                st.markdown(f"""
+                <div class="card">
+                    <div class="card-title">Cancer Formation Pathway</div>
+                    <div style="font-size:0.9rem;line-height:1.8">
+                        <b style="color:#00d4ff">{top_cancer_name} Cancer</b> — Formation Mechanism:<br>
+                        Oncogenic driver mutations → uncontrolled cell proliferation →
+                        evasion of apoptosis → angiogenesis (VEGF upregulation) →
+                        local invasion via ECM degradation (MMPs) → lymphovascular spread →
+                        distant metastasis via epithelial-mesenchymal transition (EMT).
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # ── Gene mutant tags ──
+            if selected_genes:
+                st.markdown("---")
+                st.markdown("#### 🧬 Mutational Profile")
+                tags_html = ""
+                for g in selected_genes:
+                    tags_html += f'<span class="gene-tag mutant">⚠ {g}</span>'
+                for g in GENE_DATABASE:
+                    if g not in selected_genes:
+                        tags_html += f'<span class="gene-tag">✓ {g}</span>'
+                st.markdown(tags_html, unsafe_allow_html=True)
+
+            # ── Risk management ──
+            st.markdown("---")
+            st.markdown(f"#### ⚕️ Risk Management Plan — <span style='color:#ef4444'>{risk_level} Risk</span>", unsafe_allow_html=True)
+
+            recs = RISK_MANAGEMENT[risk_level]
+            for icon, label, text in recs:
+                st.markdown(f"""
+                <div class="rec-item">
+                    <div class="rec-icon">{icon}</div>
+                    <div class="rec-text">
+                        <div class="rec-label">{label}</div>
+                        {text}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # ── Screening protocols ──
+            if show_screening:
+                st.markdown("---")
+                st.markdown(f"#### 🔭 Recommended Screening Protocol — {top_cancer_name} Cancer")
+                screen_key = next(
+                    (k for k in SCREENING_RECOMMENDATIONS if k.lower() in top_cancer_name.lower()),
+                    None
+                )
+                if screen_key:
+                    for item in SCREENING_RECOMMENDATIONS[screen_key]:
+                        st.markdown(f"- {item}")
+                else:
+                    st.info("Consult with specialist oncologist for specific screening protocol.")
+
+
+# ─────────────────────────────────────
+# TAB 4 — Clinical Report
+# ─────────────────────────────────────
+with tab4:
+    st.markdown("#### 📄 Clinical Diagnostic Report")
+
+    if not selected_symptoms and not selected_genes:
+        st.info("Complete symptom input and gene panel to generate report.")
+    else:
+        cancer_scores_r = compute_cancer_scores(
+            selected_symptoms, selected_genes, duration_months, family_history
+        )
+        if cancer_scores_r:
+            top_r = list(cancer_scores_r.items())
+            top_cancer_r = top_r[0][0]
+            top_score_r  = top_r[0][1]
+            stage_r, stage_num_r = determine_stage(top_score_r, selected_genes)
+            risk_r = determine_risk(stage_num_r, len(selected_genes), len(selected_symptoms))
+            stage_info_r = STAGING_CRITERIA[stage_r]
+
+            report_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+            report_md = f"""
+---
+## 🏥 PyMutScan Virtual Patient Diagnostic Report
+
+**Date/Time:** {report_time}  
+**Patient ID:** {patient_name} | **Age:** {patient_age}y | **Sex:** {patient_sex}  
+**Report Type:** AI-Assisted Oncological Risk Assessment
+
+---
+
+### 1. PRIMARY DIAGNOSIS
+**{top_cancer_name} Cancer** — *{stage_r}*  
+5-Year Survival Estimate: **{stage_info_r['5yr_survival']}**  
+Clinical Urgency: **{stage_info_r['urgency']}**  
+Overall Risk Level: **{risk_r}**
+
+---
+
+### 2. DIFFERENTIAL DIAGNOSES
+| Rank | Cancer Type | Relative Risk Score |
+|------|-------------|---------------------|
+""" + "\n".join([
+    f"| {i+1} | {c} | {'█' * min(int(s/5),20)} ({s:.0f}) |"
+    for i, (c, s) in enumerate(top_r[:5])
+]) + f"""
+
+---
+
+### 3. PRESENTING SYMPTOMS ({len(selected_symptoms)} recorded)
+{chr(10).join(f'- {s}' for s in selected_symptoms) if selected_symptoms else '- None recorded'}
+
+**Duration:** {duration_months} months  
+**Family History:** {'Yes' if family_history else 'No'}  
+**Smoking Status:** {'Yes' if smoker else 'No'}
+
+---
+
+### 4. MUTATIONAL GENE PROFILE ({len(selected_genes)} genes mutated)
+{chr(10).join(f'- **{g}** ({GENE_DATABASE[g]["role"]}) — Pathway: `{GENE_DATABASE[g]["pathway"]}`' for g in selected_genes) if selected_genes else '- No mutations selected'}
+
+---
+
+### 5. CANCER STAGING ASSESSMENT
+**{stage_r}** — {stage_info_r['description']}
+
+| Criteria | Assessment |
+|----------|------------|
+| Primary Tumor | Present |
+| Lymph Node Spread | {'Likely (Stage III–IV)' if stage_num_r >= 3 else 'Limited/None'} |
+| Distant Metastasis | {'Probable (Stage IV)' if stage_num_r == 4 else 'Unlikely'} |
+| Molecular Subtype | {'High-risk genomic profile' if len(selected_genes) >= 3 else 'Standard genomic profile'} |
+
+---
+
+### 6. RISK MANAGEMENT PLAN
+"""
+            for icon, label, text in RISK_MANAGEMENT[risk_r]:
+                report_md += f"\n**{icon} {label}:** {text}\n"
+
+            report_md += f"""
+---
+
+### 7. RECOMMENDED NEXT STEPS
+1. Urgent referral to oncology specialist ({stage_info_r['urgency']} priority)
+2. Full NGS panel if not yet performed (tumor + germline)
+3. Advanced imaging: PET-CT / MRI for staging confirmation
+4. Tissue biopsy for histopathological confirmation
+5. Multidisciplinary Tumor Board review
+6. Patient counseling and informed consent for treatment pathway
+
+---
+
+> ⚠️ **Disclaimer:** This report is generated by an AI-assisted bioinformatics tool for educational and research purposes only. It does NOT constitute a clinical diagnosis. All findings must be validated by a qualified medical professional.
+
+*Generated by PyMutScan Virtual Patient Diagnosis Module | Navneet © 2024*
+"""
+
+            st.markdown(report_md)
+
+            # Download
+            st.download_button(
+                label="⬇️ Download Clinical Report (.md)",
+                data=report_md,
+                file_name=f"PyMutScan_Report_{patient_name}_{datetime.now().strftime('%Y%m%d')}.md",
+                mime="text/markdown"
+            )
+
+            # Radar chart — gene impact
+            if selected_genes and len(selected_genes) >= 3:
+                st.markdown("---")
+                st.markdown("#### 🕸️ Gene Impact Radar")
+                radar_genes = selected_genes[:8]
+                radar_vals  = [GENE_DATABASE[g]["risk_multiplier"] for g in radar_genes]
+
+                fig_radar = go.Figure(go.Scatterpolar(
+                    r=radar_vals + [radar_vals[0]],
+                    theta=radar_genes + [radar_genes[0]],
+                    fill="toself",
+                    fillcolor="rgba(0,212,255,0.15)",
+                    line=dict(color="#00d4ff", width=2),
+                    marker=dict(color="#00d4ff", size=8)
+                ))
+                fig_radar.update_layout(
+                    paper_bgcolor="#111827", font_color="#e2e8f0",
+                    polar=dict(
+                        bgcolor="#0a0f1e",
+                        radialaxis=dict(visible=True, range=[0, 4], gridcolor="#1e2d45", color="#64748b"),
+                        angularaxis=dict(gridcolor="#1e2d45", color="#94a3b8")
+                    ),
+                    height=400,
+                    title="Mutated Gene Risk Multiplier Profile"
+                )
+                st.plotly_chart(fig_radar, use_container_width=True)
+
+# Footer
+st.markdown("---")
+st.markdown(
+    "<div style='text-align:center;color:#334155;font-size:0.78rem;font-family:JetBrains Mono,monospace'>"
+    "PyMutScan Virtual Patient Diagnosis · Built for Computational Oncology Research · Navneet © 2024"
+    "</div>",
+    unsafe_allow_html=True
+)
