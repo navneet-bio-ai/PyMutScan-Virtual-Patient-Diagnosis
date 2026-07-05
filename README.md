@@ -6,7 +6,7 @@ A Streamlit-powered web app for virtual patient diagnosis using mutation scannin
 
 PyMutScan Virtual Patient Diagnosis is a Streamlit-based, AI-assisted oncology risk assessment simulator. It takes a virtual patient's profile, presenting symptoms, and mutated gene panel (from simulated NGS/sequencing results) and generates a full computational oncology diagnostic workflow — from differential diagnosis and cancer staging to a risk management plan and a downloadable clinical report.
 
-🔗 **Live Demo:** []
+🔗 **Live Demo:** [https://pymutscan-virtual-patient-diagnosis-1.streamlit.app/]
 
 ---
 
